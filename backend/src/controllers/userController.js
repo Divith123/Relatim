@@ -2,6 +2,7 @@ const db = require('../config/database');
 const bcrypt = require('bcryptjs');
 const speakeasy = require('speakeasy');
 const QRCode = require('qrcode');
+const { transformUserImageUrls } = require('../utils/imageUrlUtils');
 
 class UserController {
   async getProfile(req, res) {
@@ -32,11 +33,14 @@ class UserController {
       // Don't return password hash
       delete user.password_hash;
 
+      // Transform image URLs for production
+      const transformedUser = transformUserImageUrls(user);
+
       res.json({
         success: true,
         data: {
           user: {
-            ...user,
+            ...transformedUser,
             settings: {
               dark_mode: user.dark_mode || false,
               notifications_enabled: user.notifications_enabled !== false,

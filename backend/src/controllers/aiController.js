@@ -4,8 +4,19 @@ const geminiService = require('../services/geminiService');
 class AIController {
   async sendMessage(req, res) {
     try {
+      console.log('🤖 AI message request received from user:', req.user.id);
+      
       const userId = req.user.id;
       const { prompt } = req.body;
+
+      if (!prompt || prompt.trim().length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Prompt is required and cannot be empty'
+        });
+      }
+
+      console.log('🤖 Processing prompt:', prompt.substring(0, 100) + '...');
 
       // Get conversation history for context
       const historyResult = await db.query(
@@ -17,6 +28,8 @@ class AIController {
         [userId]
       );
 
+      console.log('🤖 Retrieved conversation history:', historyResult.rows.length, 'messages');
+
       // Format conversation history
       const conversationHistory = historyResult.rows.reverse().map(chat => [
         { content: chat.prompt, isUser: true },
@@ -24,9 +37,17 @@ class AIController {
       ]).flat();
 
       // Generate AI response
+      console.log('🤖 Generating AI response...');
       const aiResponse = await geminiService.generateResponse(prompt, conversationHistory);
+      
+      console.log('🤖 AI response generated:', {
+        success: aiResponse.success,
+        hasResponse: !!aiResponse.response,
+        isFallback: aiResponse.fallback
+      });
 
       if (!aiResponse.success && !aiResponse.fallback) {
+        console.error('🤖 AI response generation failed:', aiResponse.error);
         return res.status(500).json({
           success: false,
           message: 'Failed to generate AI response',
@@ -37,6 +58,8 @@ class AIController {
       // Use fallback response if AI service is unavailable
       const responseText = aiResponse.response;
       const isFallback = aiResponse.fallback || false;
+
+      console.log('🤖 Saving conversation to database...');
 
       // Save conversation to database
       const chatResult = await db.query(
@@ -57,6 +80,7 @@ class AIController {
       );
 
       const chat = chatResult.rows[0];
+      console.log('🤖 Conversation saved with ID:', chat.id);
 
       // Get user details for the response
       const userResult = await db.query(
@@ -106,12 +130,35 @@ class AIController {
       });
 
     } catch (error) {
-      console.error('AI message error:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Failed to process AI message',
-        error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-      });
+      console.error('🤖 AI message error:', error);
+      console.error('🤖 Error stack:', error.stack);
+      
+      // Try to provide a fallback response even if there's an error
+      try {
+        const fallbackResponse = "I'm sorry, I'm experiencing some technical difficulties right now. Please try again in a moment. 🤖";
+        
+        res.status(200).json({
+          success: true,
+          message: 'AI response generated (emergency fallback)',
+          response: fallbackResponse,
+          data: { 
+            chat: {
+              id: null,
+              prompt: req.body.prompt || '',
+              response: fallbackResponse,
+              created_at: new Date().toISOString(),
+              is_fallback: true
+            }
+          }
+        });
+      } catch (fallbackError) {
+        console.error('🤖 Even fallback failed:', fallbackError);
+        res.status(500).json({
+          success: false,
+          message: 'Failed to process AI message',
+          error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+        });
+      }
     }
   }
 

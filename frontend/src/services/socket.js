@@ -22,30 +22,35 @@ class SocketService {
       return null;
     }
 
-    // For Vercel production, skip Socket.IO and use polling only
-    if (window.location.hostname.includes('vercel.app') || window.location.hostname.includes('relatim')) {
-      console.log('🔌 Vercel environment detected - using polling-only mode');
+    // For Vercel production, skip Socket.IO entirely and use polling only
+    const isProduction = window.location.hostname.includes('vercel.app') || 
+                        window.location.hostname.includes('relatim.vercel.app') ||
+                        window.location.protocol === 'https:';
+    
+    if (isProduction) {
+      console.log('🔌 Production environment detected - using polling-only mode (no Socket.IO)');
       this.setupFallbackPolling(token);
+      this.isConnected = true; // Mark as "connected" to prevent further attempts
       return null;
     }
 
     const serverUrl = process.env.REACT_APP_SOCKET_URL || window.location.origin;
     
-    // For local development, use Socket.IO with polling transport
+    // For local development only, use Socket.IO with polling transport
+    console.log('🔌 Local development - initializing Socket.IO with polling transport');
     this.socket = io(serverUrl, {
       auth: { token },
       transports: ['polling'], // Use polling for better compatibility
       reconnection: true,
       reconnectionAttempts: this.maxReconnectAttempts,
       reconnectionDelay: this.reconnectDelay,
-      timeout: 20000, // Increased timeout for polling
+      timeout: 20000,
       forceNew: true,
       upgrade: false, // Disable transport upgrades
     });
 
-    console.log('🔌 Initializing socket connection with polling transport');
     this.setupEventListeners();
-    this.setupFallbackPolling(token); // Add fallback polling
+    this.setupFallbackPolling(token); // Add fallback polling for local too
     return this.socket;
   }
 
