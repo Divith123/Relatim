@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 
-const messageController = require('../controllers/messageController');
+const { messageController } = require('../controllers/messageController');
 const { authenticateToken } = require('../middleware/auth');
 const { uploadMessageFile, handleUploadError } = require('../middleware/upload');
 const { validateMessage } = require('../middleware/validation');
@@ -9,6 +9,12 @@ const { messageLimiter, apiLimiter } = require('../middleware/rateLimiter');
 
 // Apply authentication to all routes
 router.use(authenticateToken);
+
+// Polling endpoint for fallback real-time updates
+router.get('/poll',
+  apiLimiter,
+  messageController.pollMessages
+);
 
 // Get messages for a conversation
 router.get('/conversation/:contactId',

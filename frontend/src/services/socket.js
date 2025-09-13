@@ -24,17 +24,51 @@ class SocketService {
 
     const serverUrl = process.env.REACT_APP_SOCKET_URL || window.location.origin;
     
+    // For production, use polling with fallback to REST API polling
     this.socket = io(serverUrl, {
       auth: { token },
-      transports: ['websocket', 'polling'],
+      transports: ['polling'], // Use polling for Vercel compatibility
       reconnection: true,
       reconnectionAttempts: this.maxReconnectAttempts,
       reconnectionDelay: this.reconnectDelay,
-      timeout: 10000,
+      timeout: 20000, // Increased timeout for polling
+      forceNew: true,
+      upgrade: false, // Disable transport upgrades
     });
 
+    console.log('🔌 Initializing socket connection with polling transport');
     this.setupEventListeners();
+    this.setupFallbackPolling(token); // Add fallback polling for when Socket.IO fails
     return this.socket;
+  }
+
+  // Fallback polling mechanism for when Socket.IO fails on Vercel
+  setupFallbackPolling(token) {
+    // If socket connection fails, fall back to REST API polling
+    this.pollInterval = setInterval(async () => {
+      if (!this.socket?.connected && token) {
+        try {
+          // Poll for new messages via REST API
+          const response = await fetch('/api/messages/poll', {
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json'
+            }
+          });
+          
+          if (response.ok) {
+            const data = await response.json();
+            if (data.newMessages?.length > 0) {
+              data.newMessages.forEach(message => {
+                this.emit('messageReceived', message);
+              });
+            }
+          }
+        } catch (error) {
+          console.warn('📡 Fallback polling failed:', error);
+        }
+      }
+    }, 3000); // Poll every 3 seconds
   }
 
   setupEventListeners() {
@@ -306,6 +340,12 @@ class SocketService {
   }
 
   disconnect() {
+    // Clear fallback polling
+    if (this.pollInterval) {
+      clearInterval(this.pollInterval);
+      this.pollInterval = null;
+    }
+    
     if (this.socket) {
       this.socket.disconnect();
       this.socket = null;

@@ -4,6 +4,14 @@ const { optimizeImage } = require('../utils/imageProcessor');
 const pushNotificationService = require('../services/pushNotificationService');
 const path = require('path');
 
+// Global socketService instance (will be set when server initializes)
+let socketService = null;
+
+// Function to set the socket service instance
+function setSocketService(service) {
+  socketService = service;
+}
+
 class MessageController {
   async getMessages(req, res) {
     try {
@@ -263,9 +271,20 @@ class MessageController {
         is_own_message: true
       };
 
-      // Emit the message via Socket.io (handled in socket service)
-      req.app.get('io').to(`user_${receiver_id}`).emit('new_message', responseMessage);
-      req.app.get('io').to(`user_${userId}`).emit('message_sent', responseMessage);
+      // Try to emit the message via Socket.IO (hybrid approach)
+      let socketSent = false;
+      if (socketService) {
+        try {
+          socketSent = socketService.sendMessageViaSocket(userId, receiver_id, responseMessage);
+          
+          // Also notify sender that message was sent
+          if (socketSent) {
+            socketService.emitToUser(userId, 'message_sent', responseMessage);
+          }
+        } catch (error) {
+          console.warn('Socket.IO unavailable, falling back to polling:', error.message);
+        }
+      }
 
       // Send push notification to receiver
       const senderName = `${sender.first_name} ${sender.last_name}`;
@@ -662,6 +681,84 @@ class MessageController {
       });
     }
   }
+
+  // Poll for new messages - fallback for Socket.IO on Vercel
+  async pollMessages(req, res) {
+    try {
+      const userId = req.user.id;
+      const { contact_id, last_message_id } = req.query;
+
+      if (!contact_id) {
+        return res.status(400).json({
+          success: false,
+          message: 'Contact ID is required'
+        });
+      }
+
+      // Get new messages since last_message_id
+      let query = `
+        SELECT 
+          m.id,
+          m.content,
+          m.file_url,
+          m.file_type,
+          m.sender_id,
+          m.receiver_id,
+          m.created_at,
+          m.read_at,
+          u.first_name,
+          u.last_name,
+          u.profile_photo
+        FROM messages m
+        JOIN users u ON u.id = m.sender_id
+        WHERE ((m.sender_id = $1 AND m.receiver_id = $2) 
+               OR (m.sender_id = $2 AND m.receiver_id = $1))
+      `;
+      
+      let params = [userId, contact_id];
+      
+      if (last_message_id) {
+        query += ` AND m.id > $3`;
+        params.push(last_message_id);
+      }
+
+      query += ` ORDER BY m.created_at ASC`;
+
+      const result = await db.query(query, params);
+
+      const messages = result.rows.map(row => ({
+        id: row.id,
+        content: row.content,
+        file_url: row.file_url,
+        file_type: row.file_type,
+        sender_id: row.sender_id,
+        receiver_id: row.receiver_id,
+        created_at: row.created_at,
+        read_at: row.read_at,
+        sender: {
+          first_name: row.first_name,
+          last_name: row.last_name,
+          profile_photo: row.profile_photo
+        }
+      }));
+
+      res.json({
+        success: true,
+        data: messages
+      });
+
+    } catch (error) {
+      console.error('Poll messages error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to poll messages',
+        error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+      });
+    }
+  }
 }
 
-module.exports = new MessageController();
+module.exports = { 
+  messageController: new MessageController(),
+  setSocketService 
+};

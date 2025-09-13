@@ -1,5 +1,6 @@
 import React from 'react';
 import { motion } from 'framer-motion';
+import { getSafeImageUrl } from '../../utils/imageUtils';
 
 // Avatar Component
 export const Avatar = ({ 
@@ -10,6 +11,8 @@ export const Avatar = ({
   online = false,
   className = '',
   onClick,
+  firstName = '',
+  lastName = '',
   ...props 
 }) => {
   const sizes = {
@@ -39,7 +42,10 @@ export const Avatar = ({
       .slice(0, 2);
   };
 
-  const initials = getInitials(alt || fallback || '');
+  const initials = getInitials(alt || fallback || `${firstName} ${lastName}` || '');
+  
+  // Use the safe image URL utility to handle transformations and fallbacks
+  const safeImageSrc = getSafeImageUrl(src, firstName, lastName);
 
   return (
     <motion.div
@@ -52,25 +58,24 @@ export const Avatar = ({
       onClick={onClick}
       {...props}
     >
-      {src ? (
-        <img
-          src={src}
-          alt={alt || 'Avatar'}
-          className="w-full h-full object-cover"
-          onError={(e) => {
-            e.target.style.display = 'none';
-            e.target.nextSibling.style.display = 'flex';
-          }}
-        />
-      ) : null}
+      <img
+        src={safeImageSrc}
+        alt={alt || 'Avatar'}
+        className="w-full h-full object-cover"
+        onError={(e) => {
+          // If image fails to load, show initials
+          e.target.style.display = 'none';
+          e.target.nextSibling.style.display = 'flex';
+        }}
+      />
       
       {/* Fallback */}
       <div
-        className={`
+        className="
           w-full h-full items-center justify-center font-medium
           bg-gradient-to-br from-green-400 to-green-600 text-white
-          ${src ? 'hidden' : 'flex'}
-        `}
+          hidden
+        "
       >
         {initials}
       </div>

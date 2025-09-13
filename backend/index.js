@@ -19,7 +19,13 @@ const dashboardRoutes = require('./src/routes/dashboard');
 // Import middleware
 const { apiLimiter } = require('./src/middleware/rateLimiter');
 
+// Import server setup for Vercel
+const { initializeForVercel } = require('./src/server-setup');
+
 const app = express();
+
+// Initialize for Vercel serverless deployment
+initializeForVercel(app);
 
 // Security middleware
 app.use(helmet({

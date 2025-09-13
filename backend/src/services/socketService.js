@@ -11,6 +11,34 @@ class SocketService {
     this.initializeSocketEvents();
   }
 
+  // Static method to create Socket.IO server with Vercel-compatible settings
+  static initializeServer(httpServer) {
+    const { Server } = require('socket.io');
+    
+    const io = new Server(httpServer, {
+      cors: {
+        origin: process.env.FRONTEND_URL || "*",
+        methods: ["GET", "POST"],
+        credentials: true
+      },
+      // Use polling for better Vercel compatibility
+      transports: ['polling'],
+      pingTimeout: 60000,
+      pingInterval: 25000,
+      // Allow HTTP long-polling for serverless
+      allowEIO3: true,
+      // Reduce memory usage for serverless
+      maxHttpBufferSize: 1e6, // 1MB
+      // Connection state recovery for reconnections
+      connectionStateRecovery: {
+        maxDisconnectionDuration: 2 * 60 * 1000, // 2 minutes
+        skipMiddlewares: true,
+      }
+    });
+
+    return new SocketService(io);
+  }
+
   initializeSocketEvents() {
     this.io.use(this.authenticateSocket.bind(this));
     
@@ -451,6 +479,58 @@ class SocketService {
 
   getUserSocketId(userId) {
     return this.connectedUsers.get(userId);
+  }
+
+  // Send message through Socket.IO if available, return true if sent
+  sendMessageViaSocket(senderId, receiverId, message) {
+    try {
+      const chatRoom = this.getChatRoomId(senderId, receiverId);
+      
+      // Send to chat room
+      this.io.to(chatRoom).emit('new_message', message);
+      
+      // Send notification to receiver's personal room
+      this.io.to(`user_${receiverId}`).emit('message_notification', message);
+      
+      return true;
+    } catch (error) {
+      console.error('Error sending message via socket:', error);
+      return false;
+    }
+  }
+
+  // Get connected users count for monitoring
+  getConnectedUsersCount() {
+    return this.connectedUsers.size;
+  }
+
+  // Gracefully close all connections (for serverless cleanup)
+  async closeConnections() {
+    try {
+      // Clear all timeouts
+      for (const [userId, typingData] of this.typingUsers) {
+        clearTimeout(typingData.timeout);
+      }
+      this.typingUsers.clear();
+      
+      // Update all connected users to offline
+      const offlinePromises = Array.from(this.connectedUsers.keys()).map(userId =>
+        this.updateUserOnlineStatus(userId, false)
+      );
+      
+      await Promise.all(offlinePromises);
+      
+      // Clear connection maps
+      this.connectedUsers.clear();
+      this.userSockets.clear();
+      
+      // Close Socket.IO server
+      if (this.io) {
+        this.io.close();
+      }
+    } catch (error) {
+      console.error('Error closing connections:', error);
+    }
   }
 }
 
