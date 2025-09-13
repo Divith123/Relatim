@@ -685,44 +685,75 @@ class MessageController {
   // Poll for new messages - fallback for Socket.IO on Vercel
   async pollMessages(req, res) {
     try {
+      console.log('📡 Poll request received:', {
+        userId: req.user?.id,
+        query: req.query,
+        headers: req.headers.authorization ? 'Bearer token present' : 'No auth header'
+      });
+
       const userId = req.user.id;
-      const { contact_id, last_message_id } = req.query;
+      const { contact_id, last_message_id, since } = req.query;
 
-      if (!contact_id) {
-        return res.status(400).json({
-          success: false,
-          message: 'Contact ID is required'
-        });
+      // If no specific contact_id, get all new messages for user
+      let query, params;
+      
+      if (contact_id) {
+        // Get messages for specific contact
+        query = `
+          SELECT 
+            m.id,
+            m.content,
+            m.file_url,
+            m.file_type,
+            m.sender_id,
+            m.receiver_id,
+            m.created_at,
+            m.read_at,
+            u.first_name,
+            u.last_name,
+            u.profile_photo
+          FROM messages m
+          JOIN users u ON u.id = m.sender_id
+          WHERE ((m.sender_id = $1 AND m.receiver_id = $2) 
+                 OR (m.sender_id = $2 AND m.receiver_id = $1))
+        `;
+        params = [userId, contact_id];
+      } else {
+        // Get all new messages for user (for general polling)
+        query = `
+          SELECT 
+            m.id,
+            m.content,
+            m.file_url,
+            m.file_type,
+            m.sender_id,
+            m.receiver_id,
+            m.created_at,
+            m.read_at,
+            u.first_name,
+            u.last_name,
+            u.profile_photo
+          FROM messages m
+          JOIN users u ON u.id = m.sender_id
+          WHERE (m.receiver_id = $1)
+        `;
+        params = [userId];
       }
 
-      // Get new messages since last_message_id
-      let query = `
-        SELECT 
-          m.id,
-          m.content,
-          m.file_url,
-          m.file_type,
-          m.sender_id,
-          m.receiver_id,
-          m.created_at,
-          m.read_at,
-          u.first_name,
-          u.last_name,
-          u.profile_photo
-        FROM messages m
-        JOIN users u ON u.id = m.sender_id
-        WHERE ((m.sender_id = $1 AND m.receiver_id = $2) 
-               OR (m.sender_id = $2 AND m.receiver_id = $1))
-      `;
-      
-      let params = [userId, contact_id];
-      
+      // Add time-based filtering
       if (last_message_id) {
-        query += ` AND m.id > $3`;
+        query += ` AND m.id > $${params.length + 1}`;
         params.push(last_message_id);
+      } else if (since) {
+        // Use timestamp if provided (fallback to last 5 minutes)
+        query += ` AND m.created_at > $${params.length + 1}`;
+        params.push(since);
+      } else {
+        // Default: messages from last 5 minutes
+        query += ` AND m.created_at > NOW() - INTERVAL '5 minutes'`;
       }
 
-      query += ` ORDER BY m.created_at ASC`;
+      query += ` ORDER BY m.created_at ASC LIMIT 50`;
 
       const result = await db.query(query, params);
 
@@ -744,7 +775,9 @@ class MessageController {
 
       res.json({
         success: true,
-        data: messages
+        newMessages: messages, // Frontend expects this key
+        count: messages.length,
+        timestamp: new Date().toISOString()
       });
 
     } catch (error) {

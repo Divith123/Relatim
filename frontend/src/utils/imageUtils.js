@@ -6,9 +6,19 @@
 export const transformImageUrl = (imageUrl) => {
   if (!imageUrl) return null;
   
-  // If it's already a proper S3 URL, return as is
-  if (imageUrl.includes('supabase.co') || imageUrl.includes('relatim-ai-uploads')) {
-    return imageUrl;
+  // If it's already a proper S3 URL, check if it needs fixing
+  if (imageUrl.includes('supabase.co')) {
+    // Fix any malformed Supabase URLs
+    if (imageUrl.includes('/storage/v1/object/public/relatim-ai-uploads/')) {
+      return imageUrl;
+    }
+    // If it's a malformed Supabase URL, try to extract the filename
+    const parts = imageUrl.split('/');
+    const filename = parts[parts.length - 1];
+    if (filename) {
+      const folder = imageUrl.includes('profile') ? 'profiles' : 'profiles';
+      return `https://ckjmnfssukjyvamesysr.supabase.co/storage/v1/object/public/relatim-ai-uploads/${folder}/${filename}`;
+    }
   }
   
   // Transform localhost URLs to S3 URLs
@@ -29,6 +39,11 @@ export const transformImageUrl = (imageUrl) => {
     const filename = pathParts[pathParts.length - 1];
     
     return `https://ckjmnfssukjyvamesysr.supabase.co/storage/v1/object/public/relatim-ai-uploads/${folder}/${filename}`;
+  }
+  
+  // Handle direct filenames (assume they're profile images)
+  if (imageUrl && !imageUrl.includes('/') && (imageUrl.includes('.jpg') || imageUrl.includes('.png'))) {
+    return `https://ckjmnfssukjyvamesysr.supabase.co/storage/v1/object/public/relatim-ai-uploads/profiles/${imageUrl}`;
   }
   
   // Return original URL if no transformation rules match
