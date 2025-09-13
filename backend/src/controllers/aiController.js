@@ -4,12 +4,13 @@ const geminiService = require('../services/geminiService');
 class AIController {
   async sendMessage(req, res) {
     try {
-      console.log('🤖 AI message request received from user:', req.user.id);
+      console.log('🤖 AI message request received from user:', req.user?.id);
       
       const userId = req.user.id;
       const { prompt } = req.body;
 
       if (!prompt || prompt.trim().length === 0) {
+        console.log('🤖 Empty prompt received');
         return res.status(400).json({
           success: false,
           message: 'Prompt is required and cannot be empty'
@@ -18,33 +19,47 @@ class AIController {
 
       console.log('🤖 Processing prompt:', prompt.substring(0, 100) + '...');
 
-      // Get conversation history for context
-      const historyResult = await db.query(
-        `SELECT prompt, response, created_at
-         FROM ai_chats 
-         WHERE user_id = $1 
-         ORDER BY created_at DESC 
-         LIMIT 10`,
-        [userId]
-      );
+      // Check if AI service is available - use fallback if not
+      let aiResponse;
+      try {
+        // Get conversation history for context
+        console.log('🤖 Fetching conversation history...');
+        const historyResult = await db.query(
+          `SELECT prompt, response, created_at
+           FROM ai_chats 
+           WHERE user_id = $1 
+           ORDER BY created_at DESC 
+           LIMIT 10`,
+          [userId]
+        );
 
-      console.log('🤖 Retrieved conversation history:', historyResult.rows.length, 'messages');
+        console.log('🤖 Retrieved conversation history:', historyResult.rows.length, 'messages');
 
-      // Format conversation history
-      const conversationHistory = historyResult.rows.reverse().map(chat => [
-        { content: chat.prompt, isUser: true },
-        { content: chat.response, isUser: false }
-      ]).flat();
+        // Format conversation history
+        const conversationHistory = historyResult.rows.reverse().map(chat => [
+          { content: chat.prompt, isUser: true },
+          { content: chat.response, isUser: false }
+        ]).flat();
 
-      // Generate AI response
-      console.log('🤖 Generating AI response...');
-      const aiResponse = await geminiService.generateResponse(prompt, conversationHistory);
-      
-      console.log('🤖 AI response generated:', {
-        success: aiResponse.success,
-        hasResponse: !!aiResponse.response,
-        isFallback: aiResponse.fallback
-      });
+        // Generate AI response
+        console.log('🤖 Generating AI response...');
+        aiResponse = await geminiService.generateResponse(prompt, conversationHistory);
+        
+        console.log('🤖 AI response generated:', {
+          success: aiResponse.success,
+          hasResponse: !!aiResponse.response,
+          isFallback: aiResponse.fallback
+        });
+      } catch (aiError) {
+        console.error('🤖 AI service error:', aiError.message);
+        // Create fallback response
+        aiResponse = {
+          success: false,
+          fallback: true,
+          response: "I'm sorry, I'm experiencing some technical difficulties right now. Please try again in a moment. 🤖",
+          error: aiError.message
+        };
+      }
 
       if (!aiResponse.success && !aiResponse.fallback) {
         console.error('🤖 AI response generation failed:', aiResponse.error);
@@ -119,8 +134,14 @@ class AIController {
         created_at: chat.created_at
       };
 
-      // Emit real-time update to user
-      req.app.get('io').to(`user_${userId}`).emit('ai_message', aiMessage);
+      // Try to emit real-time update to user (if Socket.IO is available)
+      try {
+        if (req.app.get('io')) {
+          req.app.get('io').to(`user_${userId}`).emit('ai_message', aiMessage);
+        }
+      } catch (socketError) {
+        console.log('🤖 Socket.IO not available (expected in serverless)');
+      }
 
       res.status(201).json({
         success: true,

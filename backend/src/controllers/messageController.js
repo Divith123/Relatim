@@ -745,12 +745,14 @@ class MessageController {
         query += ` AND m.id > $${params.length + 1}`;
         params.push(last_message_id);
       } else if (since) {
-        // Use timestamp if provided (fallback to last 5 minutes)
+        // Use timestamp if provided
         query += ` AND m.created_at > $${params.length + 1}`;
         params.push(since);
       } else {
-        // Default: messages from last 5 minutes
-        query += ` AND m.created_at > NOW() - INTERVAL '5 minutes'`;
+        // Default: messages from last 5 minutes (using timestamp calculation)
+        const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+        query += ` AND m.created_at > $${params.length + 1}`;
+        params.push(fiveMinutesAgo);
       }
 
       query += ` ORDER BY m.created_at ASC LIMIT 50`;
